@@ -16,6 +16,8 @@ describe('apyapp', () => {
 
   const minterAccount = anchor.web3.Keypair.generate();
 
+
+  // Intitialize the minter account which will receive the SPL token from the user
   it("Initialize Minter", async () => {
 
     const tx = await program.rpc.initialize(
@@ -34,61 +36,18 @@ describe('apyapp', () => {
     );
 
   });
-
-  // let mauthorty ;
-  // let mintKP;
-  // it("Setting the mint",async()=>{
-
-  //   mauthorty = minterAccount.publicKey;
-   
-  //   mintKP = anchor.web3.Keypair.generate();
-  //   const instructions = await createMintInstructions(
-  //     provider,
-  //     mauthorty,
-  //     mintKP.publicKey
-  //   );
   
-  //   const tx = new anchor.web3.Transaction();
-  //   tx.add(...instructions);
-    
-  //   await provider.send(tx, [mintKP]);
-    
-  //   let mint2 = mintKP.publicKey;
-    
-  //   fromProg = await createTokenAccount(provider,mint2,minterAccount.publicKey);
-
-  // })
-
-  // it("Trigger Mint to program",async()=>{
-
-  //   await program.rpc.mintToProgram(new anchor.BN(2000), {
-  //     accounts: {
-  //       authority: mauthorty.publicKey,
-  //       mint: mintKP,
-  //       to: fromProg,
-  //       tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
-  //     },
-  //     // signers: [
-  //     //   dataAccount
-  //     // ]
-  //   });
-
-  //   const fromAccount = await getTokenAccount(provider, fromProg);
-
-  //   assert.ok(fromAccount.amount.eq(new anchor.BN(2000)));
-
-  // })
-
-
+  // Initializes the test state
   it("Initializes test state", async () => {
 
     mint = await createMint(provider);
     from = await createTokenAccount(provider, mint, provider.wallet.publicKey);
-    // to = await createTokenAccount(provider, mint, provider.wallet.publicKey);
     to = await createTokenAccount(provider, mint, minterAccount.publicKey);
 
   });
 
+
+  // Mint tokens to the user account so that we can begin testing, not a prod scenario
   it("Mints a token", async () => {
     await program.rpc.proxyMintTo(new anchor.BN(1000), {
       accounts: {
@@ -96,6 +55,8 @@ describe('apyapp', () => {
         mint,
         to: from,
         tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
+        minterAccount: minterAccount.publicKey,
+        user : provider.wallet.publicKey
       },
     });
 
@@ -104,7 +65,8 @@ describe('apyapp', () => {
     assert.ok(fromAccount.amount.eq(new anchor.BN(1000)));
   });
 
-  it("Transfers a token", async () => {
+  // Lock tokens to earn APY
+  it("Create a lock", async () => {
 
     await program.rpc.proxyTransfer(new anchor.BN(400), {
       accounts: {
@@ -126,15 +88,16 @@ describe('apyapp', () => {
       
     await console.log(account);
     assert.ok(fromAccount.amount.eq(new anchor.BN(600)));
+    await console.log(fromAccount.amount.toString(),"---");
     assert.ok(toAccount.amount.eq(new anchor.BN(400)));
     await console.log(toAccount.amount)
 
   });
   
-  
-  it("Transfers back token", async () => {
+  // Unlock Tokens
+  it("Unlock tokens and give up staked rewards till now", async () => {
 
-    await program.rpc.proxyTransferFrom(new anchor.BN(300), {
+    await program.rpc.proxyTransferFrom(new anchor.BN(400), {
       accounts: {
         authority: minterAccount.publicKey,
         to: from,
@@ -156,17 +119,83 @@ describe('apyapp', () => {
       
     await console.log(account);
     // assert.ok(fromAccount.amount.eq(new anchor.BN(600)));
+    await console.log(fromAccount.amount.toString(),"---");
     // assert.ok(toAccount.amount.eq(new anchor.BN(400)));
     await console.log(toAccount.amount)
 
   });
 
-  it("Burns a token", async () => {
+  // Lock tokens again
+  it("Transfers token again", async () => {
 
-    
+    await program.rpc.proxyTransfer(new anchor.BN(400), {
+      accounts: {
+        authority: provider.wallet.publicKey,
+        to,
+        from,
+        tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
+        minterAccount: minterAccount.publicKey,
+        user : provider.wallet.publicKey
+      },
+    });
+
+    const fromAccount = await getTokenAccount(provider, from);
+    const toAccount = await getTokenAccount(provider, to);
+
+    let account = await program.account.minterAccount.fetch(
+      minterAccount.publicKey
+    );
+      
+    await console.log(account);
+    assert.ok(fromAccount.amount.eq(new anchor.BN(600)));
+    await console.log(fromAccount.amount.toString(),"---");
+    assert.ok(toAccount.amount.eq(new anchor.BN(400)));
+    await console.log(toAccount.amount)
 
   });
 
+
+  // Claim the rewards received till now
+  it("Claim tokens", async () => {
+
+    let account = await program.account.minterAccount.fetch(
+      minterAccount.publicKey
+    );
+    let amount = account.userBalances[0];
+    let locktime = account.userLocktime[0];
+    console.log(amount.toString(10),locktime.toString(10))
+
+    let fromAccount = await getTokenAccount(provider, from);
+    await console.log(fromAccount.amount.toString(),"---1");
+    console.log(fromAccount.amount.toString(10));
+    await sleep(10000);
+    
+    await program.rpc.claimStake(amount,locktime, {
+      accounts: {
+        authority: provider.wallet.publicKey,
+        mint,
+        to: from,
+        tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
+        minterAccount: minterAccount.publicKey,
+        user : provider.wallet.publicKey
+      },
+    });
+    
+    fromAccount = await getTokenAccount(provider, from);
+    await console.log(fromAccount.amount.toString(),"---2");
+    
+    account = await program.account.minterAccount.fetch(
+      minterAccount.publicKey
+      );
+      amount = account.userBalances[0];
+      locktime = account.userLocktime[0];
+      console.log(amount.toString(10),locktime.toString(10))
+      console.log(fromAccount.amount.toString(10));
+
+
+  });
+
+  // Set new mint authority... only for testing purposes
   it("Set new mint authority", async () => {
 
     const newMintAuthority = anchor.web3.Keypair.generate();
@@ -275,4 +304,8 @@ async function createTokenAccountInstrs(
       owner,
     }),
   ];
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

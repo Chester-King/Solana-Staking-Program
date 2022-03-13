@@ -14,11 +14,7 @@ pub mod apyapp {
         Ok(())
     }
 
-    pub fn mint_to_program(ctx: Context<ProxyMintToUsingProgram>, amount: u64) -> ProgramResult{
-        token::mint_to(ctx.accounts.into(), amount);
-        Ok(())
-    }
-
+    // Function to Create a lock
     pub fn proxy_transfer(ctx: Context<ProxyTransfer>, amount: u64) -> ProgramResult {
         token::transfer(ctx.accounts.into(), amount);
         let now_ts = Clock::get().unwrap().unix_timestamp as u64;
@@ -35,7 +31,7 @@ pub mod apyapp {
         Ok(())
     }
     
-    
+    // Function to get back the tokens from the lock
     pub fn proxy_transfer_from(ctx: Context<ProxyTransferFrom>, amount: u64) -> ProgramResult {
         token::transfer(ctx.accounts.into(), amount);
         // let now_ts = Clock::get().unwrap().unix_timestamp as u64;
@@ -43,26 +39,47 @@ pub mod apyapp {
         let _user_account = &mut ctx.accounts.user;
         
         let index = _minter_account.user_addresses.iter().position(|&r| r == _user_account.to_account_info().key()).unwrap();
-        require!(_minter_account.user_balances[index]>=amount,CustomError::InsufficentBalance);
-        _minter_account.user_balances[index]-=amount;
-        // if _minter_account.user_addresses.contains(&_user_account.to_account_info().key()){
-        //     require!(false,CustomError::LockExist);
-        // }
-
-        // _minter_account.user_addresses.push(_user_account.to_account_info().key());
-        // _minter_account.user_balances.push(amount);
-        // _minter_account.user_locktime.push(now_ts);
+        require!(_minter_account.user_balances[index]==amount,CustomError::InsufficentBalance);
+        _minter_account.user_addresses.remove(index);
+        _minter_account.user_balances.remove(index);
+        _minter_account.user_locktime.remove(index);
+        
         Ok(())
     }
+
+    // Claim the tokens which are to be minted as return
+    pub fn claim_stake(ctx: Context<ProxyMintTo>, amount: u64, acctime : u64) -> ProgramResult {
+        let now_ts = Clock::get().unwrap().unix_timestamp as u64;
+        let difference = now_ts-acctime;
+        let total_year_seconds = 31536000;
+        let claim_amount = (difference*amount)/(total_year_seconds*10);
+        
+        token::mint_to(ctx.accounts.into(), claim_amount);
+        let _minter_account = &mut ctx.accounts.minter_account;
+        let _user_account = &mut ctx.accounts.user;
+        let index = _minter_account.user_addresses.iter().position(|&r| r == _user_account.to_account_info().key()).unwrap();
+        require!(_minter_account.user_balances[index]==amount,CustomError::WrongInput);
+        require!(_minter_account.user_locktime[index]==acctime,CustomError::WrongInput);
+        _minter_account.user_locktime[index] = now_ts;
+        Ok(())
+
+        
+        
+    }
     
+
+    // Test function to mint tokens - will be removed in prod
     pub fn proxy_mint_to(ctx: Context<ProxyMintTo>, amount: u64) -> ProgramResult {
         token::mint_to(ctx.accounts.into(), amount)
     }
     
+
+    // Test function to burn tokens - will be removed in prod
     pub fn proxy_burn(ctx: Context<ProxyBurn>, amount: u64) -> ProgramResult {
         token::burn(ctx.accounts.into(), amount)
     }
     
+    // Test function to set new authority
     pub fn proxy_set_authority(
         ctx: Context<ProxySetAuthority>,
         authority_type: AuthorityType,
@@ -78,7 +95,8 @@ pub mod apyapp {
 #[error]
 pub enum CustomError {
     LockExist,
-    InsufficentBalance
+    InsufficentBalance,
+    WrongInput
 }
 
 
@@ -132,6 +150,8 @@ pub struct ProxyTransferFrom<'info> {
 }
 
 
+
+
 #[account]
 pub struct MinterAccount {
     pub user_addresses: Vec<Pubkey>,
@@ -147,19 +167,13 @@ pub struct ProxyMintTo<'info> {
     pub mint: AccountInfo<'info>,
     #[account(mut)]
     pub to: AccountInfo<'info>,
+    #[account(mut)]
+    pub minter_account: Account<'info, MinterAccount>,
     pub token_program: AccountInfo<'info>,
+    pub user: Signer<'info>
 }
 
-#[derive(Accounts)]
-pub struct ProxyMintToUsingProgram<'info> {
-    #[account(signer)]
-    pub authority: AccountInfo<'info>,
-    #[account(mut)]
-    pub mint: AccountInfo<'info>,
-    #[account(mut)]
-    pub to: AccountInfo<'info>,
-    pub token_program: AccountInfo<'info>,
-}
+
 
 #[derive(Accounts)]
 pub struct ProxyBurn<'info> {
@@ -224,19 +238,7 @@ impl<'a, 'b, 'c, 'info> From<&mut ProxyMintTo<'info>>
     }
 }
 
-impl<'a, 'b, 'c, 'info> From<&mut ProxyMintToUsingProgram<'info>>
-    for CpiContext<'a, 'b, 'c, 'info, MintTo<'info>>
-{
-    fn from(accounts: &mut ProxyMintToUsingProgram<'info>) -> CpiContext<'a, 'b, 'c, 'info, MintTo<'info>> {
-        let cpi_accounts = MintTo {
-            mint: accounts.mint.clone(),
-            to: accounts.to.clone(),
-            authority: accounts.authority.clone(),
-        };
-        let cpi_program = accounts.token_program.clone();
-        CpiContext::new(cpi_program, cpi_accounts)
-    }
-}
+
 
 impl<'a, 'b, 'c, 'info> From<&mut ProxyBurn<'info>> for CpiContext<'a, 'b, 'c, 'info, Burn<'info>> {
     fn from(accounts: &mut ProxyBurn<'info>) -> CpiContext<'a, 'b, 'c, 'info, Burn<'info>> {
